@@ -1,203 +1,126 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, send_file
 from flask_cors import CORS
-import fitz  # PyMuPDF
-import io
-import json
-import base64
-import os
+import fitz
+import io, base64, os, re
 
 app = Flask(__name__)
 CORS(app)
 
-HTML_PAGE = open(os.path.join(os.path.dirname(__file__), 'index.html')).read()
+HTML_PAGE = open(os.path.join(os.path.dirname(__file__), 'index.html'), encoding='utf-8').read()
 
 @app.route('/')
 def index():
-    return HTML_PAGE, 200, {'Content-Type': 'text/html'}
-
-@app.route('/api/extract', methods=['POST'])
-def extract_text():
-    """Extract all text blocks with positions from PDF."""
-    file = request.files.get('pdf')
-    if not file:
-        return jsonify({'error': 'No PDF uploaded'}), 400
-
-    data = file.read()
-    doc = fitz.open(stream=data, filetype='pdf')
-
-    pages = []
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        blocks = []
-        # Get detailed text with word-level positions
-        words = page.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
-        page_dict = page.get_text("dict")
-
-        # Group by blocks and lines for better structure
-        for block in page_dict.get("blocks", []):
-            if block.get("type") != 0:  # skip images
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    blocks.append({
-                        "text": span["text"],
-                        "x": span["bbox"][0],
-                        "y": span["bbox"][1],
-                        "x1": span["bbox"][2],
-                        "y1": span["bbox"][3],
-                        "font": span.get("font", ""),
-                        "size": span.get("size", 12),
-                        "color": span.get("color", 0),
-                        "flags": span.get("flags", 0),
-                    })
-
-        pages.append({
-            "page": page_num + 1,
-            "width": page.rect.width,
-            "height": page.rect.height,
-            "blocks": blocks
-        })
-
-    doc.close()
-
-    # Return PDF as base64 too
-    b64 = base64.b64encode(data).decode()
-    return jsonify({"pages": pages, "pdf_b64": b64})
+    return HTML_PAGE, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
-@app.route('/api/preview', methods=['POST'])
-def preview_page():
-    """Render a single page as PNG for preview."""
-    body = request.get_json()
-    pdf_b64 = body.get('pdf_b64')
-    page_num = body.get('page', 1) - 1
-    scale = body.get('scale', 1.5)
+def parse_color(c):
+    if not c: return (0.0, 0.0, 0.0)
+    if c.startswith('#'):
+        h = c.lstrip('#')
+        if len(h) == 6:
+            return (int(h[0:2],16)/255, int(h[2:4],16)/255, int(h[4:6],16)/255)
+    if c.startswith('rgb'):
+        nums = re.findall(r'\d+', c)
+        if len(nums) >= 3:
+            return (int(nums[0])/255, int(nums[1])/255, int(nums[2])/255)
+    return (0.0, 0.0, 0.0)
 
-    data = base64.b64decode(pdf_b64)
-    doc = fitz.open(stream=data, filetype='pdf')
-    page = doc[page_num]
-    mat = fitz.Matrix(scale, scale)
-    pix = page.get_pixmap(matrix=mat, alpha=False)
-    img_bytes = pix.tobytes("png")
-    doc.close()
-
-    b64 = base64.b64encode(img_bytes).decode()
-    return jsonify({"image_b64": b64, "width": pix.width, "height": pix.height})
+def font_map(name):
+    n = (name or '').lower()
+    if any(k in n for k in ['times','roman','minion']): return 'tibo'
+    if any(k in n for k in ['courier','mono']): return 'cour'
+    return 'helv'
 
 
-@app.route('/api/edit', methods=['POST'])
-def edit_pdf():
-    """Apply text edits to PDF and return modified PDF."""
-    body = request.get_json()
-    pdf_b64 = body.get('pdf_b64')
-    edits = body.get('edits', [])
-    # edits: list of {page, x, y, x1, y1, old_text, new_text, font, size, color}
+@app.route('/api/export', methods=['POST'])
+def export_pdf():
+    body     = request.get_json(force=True)
+    pdf_b64  = body.get('pdf_b64', '')
+    edits    = body.get('edits', [])
 
-    data = base64.b64decode(pdf_b64)
-    doc = fitz.open(stream=data, filetype='pdf')
+    pdf_b64 += '=' * (-len(pdf_b64) % 4)
+    pdf_data = base64.b64decode(pdf_b64)
+    doc      = fitz.open(stream=pdf_data, filetype='pdf')
 
-    for edit in edits:
-        page_num = edit['page'] - 1
-        if page_num < 0 or page_num >= len(doc):
-            continue
+    by_page = {}
+    for e in edits:
+        by_page.setdefault(e['page'] - 1, []).append(e)
+
+    for page_num, page_edits in by_page.items():
+        if page_num < 0 or page_num >= len(doc): continue
         page = doc[page_num]
 
-        rect = fitz.Rect(edit['x'], edit['y'], edit['x1'], edit['y1'])
-        old_text = edit.get('old_text', '')
-        new_text = edit.get('new_text', '')
+        for e in page_edits:
+            old_text = e.get('old_text', '')
+            new_text = e.get('new_text', '').strip()
+            is_ann   = e.get('is_annotation', False)
 
-        if old_text == new_text:
-            continue
+            x0, y0 = e['x'], e['y']
+            x1, y1 = e['x1'], e['y1']
+            font_sz = max(4.0, float(e.get('font_size', 12)))
+            fg      = parse_color(e.get('fg_color'))
+            fn      = font_map(e.get('font_name', ''))
 
-        # Get background color by sampling pixel at that area
-        # Redact (whiteout) the original text
-        annot = page.add_redact_annot(rect)
-        # Try to match background — default white
-        bg_color = edit.get('bg_color', (1, 1, 1))
-        if isinstance(bg_color, list):
-            bg_color = tuple(bg_color)
-        annot.set_colors(fill=bg_color)
-        annot.update()
+            if is_ann:
+                # New text box — just insert
+                if not new_text: continue
+                for li, line in enumerate(new_text.split('\n')):
+                    if not line: continue
+                    try:
+                        page.insert_text(
+                            (x0, y0 + font_sz + li * font_sz * 1.2),
+                            line, fontname=fn, fontsize=font_sz, color=fg
+                        )
+                    except Exception as ex:
+                        print(f"ann insert_text warning: {ex}")
+            else:
+                # Existing text replacement
+                if old_text == new_text: continue
 
-    # Apply all redactions
-    for page_num in range(len(doc)):
-        doc[page_num].apply_redactions()
+                # STEP 1: Remove original text using redaction with NO fill
+                # fill=None means transparent — background shows through naturally
+                rect = fitz.Rect(x0 - 1, y0 - 1, x1 + 2, y1 + 2)
+                annot = page.add_redact_annot(rect)
+                annot.update()
 
-    # Now insert new texts
-    for edit in edits:
-        page_num = edit['page'] - 1
-        if page_num < 0 or page_num >= len(doc):
-            continue
-        page = doc[page_num]
+        # Apply redactions — images untouched, fill transparent
+        page.apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_NONE,
+            graphics=fitz.PDF_REDACT_LINE_ART_NONE
+        )
 
-        new_text = edit.get('new_text', '')
-        if not new_text.strip():
-            continue
+        # STEP 2: Insert new text after redactions applied
+        for e in page_edits:
+            if e.get('is_annotation'): continue
+            if e.get('old_text') == e.get('new_text'): continue
+            new_text = e.get('new_text', '').strip()
+            if not new_text: continue
 
-        x = edit['x']
-        y = edit['y']
-        size = edit.get('size', 12)
-        # Color: int (PDF format) or tuple
-        color_int = edit.get('color', 0)
-        if isinstance(color_int, int):
-            r = ((color_int >> 16) & 0xFF) / 255
-            g = ((color_int >> 8) & 0xFF) / 255
-            b = (color_int & 0xFF) / 255
-            color = (r, g, b)
-        else:
-            color = tuple(color_int)
+            x0      = e['x']
+            y0      = e['y']
+            font_sz = max(4.0, float(e.get('font_size', 12)))
+            fg      = parse_color(e.get('fg_color'))
+            fn      = font_map(e.get('font_name', ''))
+            baseline = y0 + font_sz
 
-        # Try to use same font, fallback to helv
-        font_name = edit.get('font', 'helv')
-        # Map common PDF font names to PyMuPDF built-ins
-        font_map = {
-            'Times': 'tibo', 'TimesNewRoman': 'tibo',
-            'Helvetica': 'helv', 'Arial': 'helv',
-            'Courier': 'cour', 'CourierNew': 'cour',
-        }
-        mapped = 'helv'
-        for k, v in font_map.items():
-            if k.lower() in font_name.lower():
-                mapped = v
-                break
-
-        try:
-            page.insert_text(
-                (x, y + size),  # PyMuPDF y is baseline
-                new_text,
-                fontname=mapped,
-                fontsize=size,
-                color=color
-            )
-        except Exception as e:
-            print(f"Warning: insert_text failed: {e}")
-            try:
-                page.insert_text((x, y + size), new_text, fontsize=size, color=color)
-            except:
-                pass
+            for li, line in enumerate(new_text.split('\n')):
+                if not line: continue
+                try:
+                    page.insert_text(
+                        (x0, baseline + li * font_sz * 1.2),
+                        line, fontname=fn, fontsize=font_sz, color=fg
+                    )
+                except Exception as ex:
+                    print(f"insert_text warning p{page_num}: {ex}")
 
     buf = io.BytesIO()
-    doc.save(buf, garbage=4, deflate=True)
+    doc.save(buf, garbage=4, deflate=True, clean=True)
     doc.close()
-    buf.seek(0)
-
-    b64_out = base64.b64encode(buf.read()).decode()
-    return jsonify({"pdf_b64": b64_out})
-
-
-@app.route('/api/download', methods=['POST'])
-def download_pdf():
-    """Return the final PDF as a file download."""
-    body = request.get_json()
-    pdf_b64 = body.get('pdf_b64')
-    data = base64.b64decode(pdf_b64)
-    buf = io.BytesIO(data)
     buf.seek(0)
     return send_file(buf, mimetype='application/pdf',
                      as_attachment=True, download_name='edited.pdf')
 
 
 if __name__ == '__main__':
-    print("\n✅ PDF Editor running at: http://localhost:5000\n")
+    print("\n✅ PDF Editor running at: http://localhost:7860\n")
     app.run(host='0.0.0.0', port=7860)
-    # app.run(debug=True, port=5000)
