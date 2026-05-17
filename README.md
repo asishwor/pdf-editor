@@ -1,3 +1,13 @@
+---
+title: PDF Editor
+emoji: 📄
+colorFrom: green
+colorTo: emerald
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # PDF Text Editor — Local Setup Guide
 
 ## के चाहिन्छ
