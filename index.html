@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PDF Text Editor</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e0f11;
+  --surface:#16181c;
+  --surface2:#1e2126;
+  --border:#2a2d35;
+  --accent:#4ade80;
+  --accent2:#22c55e;
+  --text:#f0f2f5;
+  --muted:#6b7280;
+  --muted2:#9ca3af;
+  --danger:#f87171;
+  --warn:#fbbf24;
+  --font:'Instrument Sans',sans-serif;
+  --mono:'Geist Mono',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* TOP BAR */
+.topbar{height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;flex-shrink:0}
+.logo{font-weight:700;font-size:15px;letter-spacing:-.3px;color:var(--accent)}
+.logo span{color:var(--muted);font-weight:400;font-size:12px;margin-left:4px}
+.sep{width:1px;height:20px;background:var(--border)}
+.spacer{flex:1}
+.st{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.btn{height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font);font-size:12px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .12s;white-space:nowrap}
+.btn:hover{border-color:#4a5060;background:#252830}
+.btn.green{background:var(--accent);border-color:var(--accent);color:#000;font-weight:600}
+.btn.green:hover{background:var(--accent2)}
+.btn:disabled{opacity:.3;pointer-events:none}
+
+/* LAYOUT */
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* SIDEBAR */
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.sidebar-head{padding:12px 14px 10px;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.page-list{overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;flex:1}
+.page-item{border-radius:6px;border:2px solid transparent;overflow:hidden;cursor:pointer;background:var(--surface2);transition:all .12s;position:relative}
+.page-item:hover{border-color:#3a3f4a}
+.page-item.on{border-color:var(--accent)}
+.page-item img{display:block;width:100%;image-rendering:crisp-edges}
+.page-num{position:absolute;bottom:4px;right:5px;font-size:9px;font-family:var(--mono);font-weight:500;color:var(--muted2);background:rgba(0,0,0,.6);padding:1px 4px;border-radius:3px}
+.page-placeholder{height:160px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
+
+/* MAIN */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* EDIT BAR */
+.editbar{height:44px;background:var(--surface);border-bottom:1px solid var(--border);display:none;align-items:center;padding:0 16px;gap:8px;flex-shrink:0}
+.editbar.on{display:flex}
+.eb-label{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.eb-input{height:28px;padding:0 10px;border-radius:5px;border:1px solid var(--accent);background:rgba(74,222,128,.08);color:var(--text);font-family:var(--mono);font-size:12px;outline:none;min-width:200px;flex:1}
+.eb-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(74,222,128,.15)}
+.eb-orig{font-size:11px;color:var(--muted);font-family:var(--mono);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eb-tag{font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(74,222,128,.12);color:var(--accent);font-family:var(--mono);font-weight:500}
+
+/* CANVAS AREA */
+.canvas-wrap{flex:1;overflow:auto;background:var(--bg);display:flex;align-items:flex-start;justify-content:center;padding:32px 24px 48px}
+
+/* DROP */
+.dropzone{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:10}
+.dropzone.hidden{display:none}
+.dz{border:2px dashed #2a2d35;border-radius:16px;padding:64px 80px;display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center;background:var(--surface);max-width:440px;transition:all .15s;cursor:pointer}
+.dz.over{border-color:var(--accent);background:rgba(74,222,128,.05)}
+.dz-icon{font-size:52px;line-height:1}
+.dz-title{font-size:22px;font-weight:700}
+.dz-sub{font-size:13px;color:var(--muted);line-height:1.7}
+.dz-btn{margin-top:4px;height:38px;padding:0 20px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;transition:all .12s}
+.dz-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* PAGE RENDER */
+#page-container{position:relative;flex-shrink:0}
+#page-container.hidden{display:none}
+#page-canvas{display:block;box-shadow:0 8px 48px rgba(0,0,0,.6);border-radius:2px}
+#text-overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+
+/* TEXT BLOCKS */
+.txt-block{position:absolute;cursor:pointer;border:1px solid transparent;border-radius:2px;transition:border-color .1s,background .1s;box-sizing:border-box}
+.txt-block:hover{border-color:rgba(74,222,128,.5);background:rgba(74,222,128,.06)}
+.txt-block.edited{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.06)}
+.txt-block.selected{border-color:var(--accent)!important;background:rgba(74,222,128,.1)!important;z-index:5}
+
+/* ZOOM */
+.zoom-bar{position:absolute;bottom:20px;right:20px;display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 8px}
+.z-btn{width:26px;height:26px;border-radius:5px;border:none;background:transparent;color:var(--muted2);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .1s}
+.z-btn:hover{background:var(--surface2);color:var(--text)}
+.z-label{font-size:11px;font-family:var(--mono);color:var(--muted);min-width:36px;text-align:center}
+
+/* LOADING */
+#loading{position:fixed;inset:0;background:rgba(14,15,17,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1000;gap:16px;backdrop-filter:blur(4px)}
+#loading.hidden{display:none}
+.spin{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.load-msg{font-size:13px;color:var(--muted);font-family:var(--mono)}
+
+/* TOAST */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;opacity:0;transition:opacity .25s;pointer-events:none;font-family:var(--mono);white-space:nowrap;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+#toast.on{opacity:1}
+#toast.good{border-color:var(--accent);color:var(--accent)}
+#toast.bad{border-color:var(--danger);color:var(--danger)}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">PDFEdit <span>· text editor</span></div>
+  <div class="sep"></div>
+  <button class="btn" id="open-btn" onclick="document.getElementById('file-in').click()">📂 Open PDF</button>
+  <input type="file" id="file-in" accept=".pdf" style="display:none" onchange="loadPDF(this)">
+  <div class="sep"></div>
+  <div class="st" id="st-info">No file loaded</div>
+  <div class="spacer"></div>
+  <div class="st" id="st-edits" style="color:var(--warn)"></div>
+  <button class="btn green" id="save-btn" disabled onclick="savePDF()">⬇ Download Edited PDF</button>
+</div>
+
+<div class="layout">
+  <!-- Sidebar: page thumbnails -->
+  <div class="sidebar">
+    <div class="sidebar-head">Pages</div>
+    <div class="page-list" id="page-list"></div>
+  </div>
+
+  <!-- Main area -->
+  <div class="main">
+    <!-- Edit bar (shown when a span is selected) -->
+    <div class="editbar" id="editbar">
+      <div class="eb-tag">EDIT</div>
+      <div class="eb-orig" id="eb-orig"></div>
+      <span style="color:var(--muted);font-size:14px">→</span>
+      <input class="eb-input" id="eb-input" placeholder="New text…" oninput="onEditInput()" onkeydown="onEditKey(event)">
+      <button class="btn" onclick="applyEdit()">Apply</button>
+      <button class="btn" style="color:var(--danger);border-color:var(--danger)" onclick="cancelEdit()">Cancel</button>
+      <div class="eb-label" style="margin-left:8px">Enter=apply · Esc=cancel</div>
+    </div>
+
+    <!-- Canvas wrap -->
+    <div class="canvas-wrap" id="canvas-wrap" style="position:relative">
+      <div class="dropzone" id="dropzone">
+        <div class="dz" id="dz-box">
+          <div class="dz-icon">📄</div>
+          <div class="dz-title">Open a PDF</div>
+          <div class="dz-sub">Drag & drop your PDF here<br>or click below to browse</div>
+          <button class="dz-btn" onclick="document.getElementById('file-in').click()">Choose PDF file</button>
+        </div>
+      </div>
+
+      <div id="page-container" class="hidden">
+        <canvas id="page-canvas"></canvas>
+        <div id="text-overlay"></div>
+      </div>
+
+      <div class="zoom-bar">
+        <button class="z-btn" onclick="changeZoom(-0.15)">−</button>
+        <div class="z-label" id="z-label">100%</div>
+        <button class="z-btn" onclick="changeZoom(0.15)">+</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="loading" class="hidden">
+  <div class="spin"></div>
+  <div class="load-msg" id="load-msg">Loading…</div>
+</div>
+<div id="toast"></div>
+
+<script>
+// ──────────────────────────────────────────
+// STATE
+// ──────────────────────────────────────────
+let pdfB64 = null;          // base64 of current PDF
+let pages = [];             // extracted page data from /api/extract
+let curPage = 1;
+let scale = 1.5;
+let edits = {};             // { "page_blockIdx": {page, blockIdx, new_text} }
+let selectedBlock = null;   // {page, idx, el}
+let thumbCache = {};        // page -> img src
+
+const API = '';  // same origin
+
+// ──────────────────────────────────────────
+// LOAD PDF
+// ──────────────────────────────────────────
+async function loadPDF(input) {
+  const file = input.files[0];
+  if (!file) return;
+  showLoad('Extracting text from PDF…');
+  try {
+    const fd = new FormData();
+    fd.append('pdf', file);
+    const res = await fetch(API + '/api/extract', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    pdfB64 = data.pdf_b64;
+    pages = data.pages;
+    curPage = 1;
+    edits = {};
+    thumbCache = {};
+    document.getElementById('st-info').textContent = `${file.name} · ${pages.length} page${pages.length > 1 ? 's' : ''}`;
+    document.getElementById('save-btn').disabled = false;
+    document.getElementById('dropzone').classList.add('hidden');
+    buildPageList();
+    await renderPage(curPage);
+    updateEditCount();
+    toast('✓ PDF loaded — click any text to edit', 'good');
+  } catch(e) {
+    toast('Error: ' + e.message, 'bad');
+    console.error(e);
+  }
+  hideLoad();
+}
+
+// ──────────────────────────────────────────
+// BUILD SIDEBAR PAGE LIST
+// ──────────────────────────────────────────
+async function buildPageList() {
+  const list = document.getElementById('page-list');
+  list.innerHTML = '';
+  for (let i = 1; i <= pages.length; i++) {
+    const item = document.createElement('div');
+    item.className = 'page-item' + (i === curPage ? ' on' : '');
+    item.dataset.page = i;
+    item.innerHTML = `<div class="page-placeholder">Page ${i}</div><div class="page-num">${i}</div>`;
+    item.onclick = () => gotoPage(i);
+    list.appendChild(item);
+    // Load thumb async
+    loadThumb(i, item);
+  }
+}
+
+async function loadThumb(pageNum, el) {
+  if (thumbCache[pageNum]) {
+    setThumb(el, thumbCache[pageNum]);
+    return;
+  }
+  try {
+    const res = await fetch(API + '/api/preview', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pdf_b64: pdfB64, page: pageNum, scale: 0.6 })
+    });
+    const data = await res.json();
+    const src = 'data:image/png;base64,' + data.image_b64;
+    thumbCache[pageNum] = src;
+    setThumb(el, src);
+  } catch(e) {}
+}
+
+function setThumb(el, src) {
+  el.innerHTML = `<img src="${src}" alt=""><div class="page-num">${el.dataset.page}</div>`;
+}
+
+function gotoPage(p) {
+  curPage = p;
+  cancelEdit();
+  document.querySelectorAll('.page-item').forEach(el => {
+    el.classList.toggle('on', parseInt(el.dataset.page) === p);
+  });
+  renderPage(p);
+}
+
+// ──────────────────────────────────────────
+// RENDER PAGE
+// ──────────────────────────────────────────
+async function renderPage(pageNum) {
+  showLoad('Rendering page…');
+  try {
+    const res = await fetch(API + '/api/preview', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pdf_b64: pdfB64, page: pageNum, scale: scale })
+    });
+    const data = await res.json();
+    const canvas = document.getElementById('page-canvas');
+    canvas.width = data.width;
+    canvas.height = data.height;
+    const img = new Image();
+    img.onload = () => {
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+    };
+    img.src = 'data:image/png;base64,' + data.image_b64;
+
+    document.getElementById('page-container').classList.remove('hidden');
+    document.getElementById('z-label').textContent = Math.round(scale * 100) + '%';
+
+    buildTextOverlay(pageNum, data.width, data.height);
+  } catch(e) {
+    toast('Render error: ' + e.message, 'bad');
+  }
+  hideLoad();
+}
+
+// ──────────────────────────────────────────
+// BUILD TEXT OVERLAY — clickable blocks
+// ──────────────────────────────────────────
+function buildTextOverlay(pageNum, renderW, renderH) {
+  const overlay = document.getElementById('text-overlay');
+  overlay.innerHTML = '';
+
+  const pageData = pages[pageNum - 1];
+  if (!pageData) return;
+
+  const scaleX = renderW / pageData.width;
+  const scaleY = renderH / pageData.height;
+
+  pageData.blocks.forEach((block, idx) => {
+    if (!block.text.trim()) return;
+    const el = document.createElement('div');
+    el.className = 'txt-block';
+    el.style.left   = (block.x * scaleX) + 'px';
+    el.style.top    = (block.y * scaleY) + 'px';
+    el.style.width  = ((block.x1 - block.x) * scaleX) + 'px';
+    el.style.height = ((block.y1 - block.y) * scaleY) + 'px';
+    el.title = block.text;
+
+    const key = `${pageNum}_${idx}`;
+    if (edits[key]) el.classList.add('edited');
+
+    el.onclick = () => selectBlock(pageNum, idx, el, block);
+    overlay.appendChild(el);
+  });
+}
+
+// ──────────────────────────────────────────
+// SELECT / EDIT BLOCK
+// ──────────────────────────────────────────
+function selectBlock(pageNum, idx, el, block) {
+  // Deselect previous
+  if (selectedBlock) selectedBlock.el.classList.remove('selected');
+
+  selectedBlock = { pageNum, idx, el, block };
+  el.classList.add('selected');
+
+  const key = `${pageNum}_${idx}`;
+  const currentText = edits[key] ? edits[key].new_text : block.text;
+
+  document.getElementById('eb-orig').textContent = block.text;
+  document.getElementById('eb-input').value = currentText;
+  document.getElementById('editbar').classList.add('on');
+  document.getElementById('eb-input').focus();
+  document.getElementById('eb-input').select();
+}
+
+function onEditInput() {}
+
+function onEditKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); applyEdit(); }
+  if (e.key === 'Escape') cancelEdit();
+}
+
+function applyEdit() {
+  if (!selectedBlock) return;
+  const newText = document.getElementById('eb-input').value;
+  const { pageNum, idx, el, block } = selectedBlock;
+  const key = `${pageNum}_${idx}`;
+
+  if (newText === block.text) {
+    // Revert to original
+    delete edits[key];
+    el.classList.remove('edited');
+  } else {
+    edits[key] = {
+      page: pageNum,
+      blockIdx: idx,
+      new_text: newText,
+      old_text: block.text,
+      x: block.x, y: block.y, x1: block.x1, y1: block.y1,
+      font: block.font, size: block.size, color: block.color
+    };
+    el.classList.add('edited');
+  }
+  updateEditCount();
+  cancelEdit();
+  toast('✓ Edit saved — download when ready', 'good');
+}
+
+function cancelEdit() {
+  if (selectedBlock) { selectedBlock.el.classList.remove('selected'); selectedBlock = null; }
+  document.getElementById('editbar').classList.remove('on');
+}
+
+function updateEditCount() {
+  const n = Object.keys(edits).length;
+  document.getElementById('st-edits').textContent = n > 0 ? `${n} edit${n > 1 ? 's' : ''} pending` : '';
+}
+
+// ──────────────────────────────────────────
+// ZOOM
+// ──────────────────────────────────────────
+function changeZoom(delta) {
+  scale = Math.max(0.5, Math.min(3, scale + delta));
+  cancelEdit();
+  renderPage(curPage);
+}
+
+// ──────────────────────────────────────────
+// SAVE PDF
+// ──────────────────────────────────────────
+async function savePDF() {
+  if (!pdfB64) return;
+  showLoad('Applying edits & generating PDF…');
+
+  try {
+    const editList = Object.values(edits);
+
+    // Send edits to backend
+    let finalB64 = pdfB64;
+    if (editList.length > 0) {
+      const res = await fetch(API + '/api/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf_b64: pdfB64, edits: editList })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      finalB64 = data.pdf_b64;
+    }
+
+    // Download
+    const dlRes = await fetch(API + '/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdf_b64: finalB64 })
+    });
+    const blob = await dlRes.blob();
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'), { href: url, download: 'edited.pdf' }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('✓ PDF downloaded!', 'good');
+  } catch(e) {
+    toast('Error: ' + e.message, 'bad');
+    console.error(e);
+  }
+  hideLoad();
+}
+
+// ──────────────────────────────────────────
+// DRAG & DROP
+// ──────────────────────────────────────────
+const dz = document.getElementById('dz-box');
+document.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+document.addEventListener('dragleave', () => dz.classList.remove('over'));
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === 'application/pdf') {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const fi = document.getElementById('file-in');
+    fi.files = dt.files;
+    loadPDF(fi);
+  }
+});
+
+// ──────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────
+function showLoad(msg) {
+  document.getElementById('load-msg').textContent = msg;
+  document.getElementById('loading').classList.remove('hidden');
+}
+function hideLoad() {
+  document.getElementById('loading').classList.add('hidden');
+}
+function toast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'on' + (type ? ' ' + type : '');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.className = '', 3000);
+}
+</script>
+</body>
+</html>
