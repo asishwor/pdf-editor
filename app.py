@@ -1,7 +1,7 @@
 from flask import Flask, request, send_file
 from flask_cors import CORS
 import fitz
-import io, base64, os, re
+import io, base64, os, re, html
 
 app = Flask(__name__)
 CORS(app)
@@ -30,6 +30,31 @@ def font_map(name):
     if any(k in n for k in ['times','roman','minion']): return 'tibo'
     if any(k in n for k in ['courier','mono']): return 'cour'
     return 'helv'
+
+
+def is_devanagari(text):
+    if not text: return False
+    return any('\u0900' <= c <= '\u097f' for c in text)
+
+FONT_DIR = os.path.join(os.path.dirname(__file__), 'fonts')
+FONT_REG = os.path.abspath(os.path.join(FONT_DIR, "NotoSansDevanagari-Regular.ttf"))
+FONT_BOLD = os.path.abspath(os.path.join(FONT_DIR, "NotoSansDevanagari-Bold.ttf"))
+
+HTML_CSS = f"""
+@font-face {{
+    font-family: "Noto Sans Devanagari";
+    src: url("{FONT_REG}");
+}}
+@font-face {{
+    font-family: "Noto Sans Devanagari";
+    src: url("{FONT_BOLD}");
+    font-weight: bold;
+}}
+body {{
+    margin: 0;
+    padding: 0;
+}}
+"""
 
 
 @app.route('/api/export', methods=['POST'])
@@ -67,12 +92,22 @@ def export_pdf():
                 for li, line in enumerate(new_text.split('\n')):
                     if not line: continue
                     try:
-                        page.insert_text(
-                            (x0, y0 + font_sz + li * font_sz * 1.2),
-                            line, fontname=fn, fontsize=font_sz, color=fg
-                        )
+                        y_baseline = y0 + font_sz + li * font_sz * 1.2
+                        if is_devanagari(line):
+                            y_top = y_baseline - font_sz * 1.3
+                            rect = fitz.Rect(x0, y_top, page.rect.width, y_top + font_sz * 2.0)
+                            fg_css = f"rgb({int(fg[0]*255)}, {int(fg[1]*255)}, {int(fg[2]*255)})"
+                            font_weight = "bold" if "bold" in e.get('font_name', '').lower() else "normal"
+                            escaped_line = html.escape(line)
+                            html_text = f"<p style=\"font-family: 'Noto Sans Devanagari'; font-weight: {font_weight}; font-size: {font_sz}pt; color: {fg_css}; margin: 0; padding: 0; line-height: 1.3;\">{escaped_line}</p>"
+                            page.insert_htmlbox(rect, html_text, css=HTML_CSS)
+                        else:
+                            page.insert_text(
+                                (x0, y_baseline),
+                                line, fontname=fn, fontsize=font_sz, color=fg
+                            )
                     except Exception as ex:
-                        print(f"ann insert_text warning: {ex}")
+                        print(f"ann insert_text/htmlbox warning: {ex}")
             else:
                 # Existing text replacement
                 if old_text == new_text: continue
@@ -106,12 +141,29 @@ def export_pdf():
             for li, line in enumerate(new_text.split('\n')):
                 if not line: continue
                 try:
-                    page.insert_text(
-                        (x0, baseline + li * font_sz * 1.2),
-                        line, fontname=fn, fontsize=font_sz, color=fg
-                    )
+                    y_baseline = baseline + li * font_sz * 1.2
+                    if is_devanagari(line):
+                        y_top = y_baseline - font_sz * 1.3
+                        rect = fitz.Rect(x0, y_top, page.rect.width, y_top + font_sz * 2.0)
+                        fg_css = f"rgb({int(fg[0]*255)}, {int(fg[1]*255)}, {int(fg[2]*255)})"
+                        font_weight = "bold" if "bold" in e.get('font_name', '').lower() else "normal"
+                        escaped_line = html.escape(line)
+                        html_text = f"<p style=\"font-family: 'Noto Sans Devanagari'; font-weight: {font_weight}; font-size: {font_sz}pt; color: {fg_css}; margin: 0; padding: 0; line-height: 1.3;\">{escaped_line}</p>"
+                        page.insert_htmlbox(rect, html_text, css=HTML_CSS)
+                    else:
+                        page.insert_text(
+                            (x0, y_baseline),
+                            line, fontname=fn, fontsize=font_sz, color=fg
+                        )
                 except Exception as ex:
-                    print(f"insert_text warning p{page_num}: {ex}")
+                    print(f"insert_text/htmlbox warning p{page_num}: {ex}")
+
+    # Force single-page continuous vertical scroll layout (/OneColumn)
+    # This overrides any inherited double-page/side-by-side layout settings from the original PDF
+    try:
+        doc.xref_set_key(doc.pdf_catalog(), "PageLayout", "/OneColumn")
+    except Exception as ex:
+        print(f"Override PageLayout warning: {ex}")
 
     buf = io.BytesIO()
     doc.save(buf, garbage=4, deflate=True, clean=True)
